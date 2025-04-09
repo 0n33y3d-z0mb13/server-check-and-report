@@ -1,91 +1,208 @@
-# 서버 자동 점검 시스템 기획서
+# server-check-and-report
 
-## 프로젝트 개요
-1. 프로젝트 주제  
- 본 프로젝트는 서버 점검 및 장애 감지를 자동화하고, SSH 및 SFTP를 이용하여 로그를 중앙에서 수집하며, HTML 리포트를 생성하는 시스템을 개발하는 것이다.   
-  이를 통해 서버 운영자가 일일이 서버에 접속하여 상태를 점검하는 부담을 줄이고, 장애 발생 시 신속하게 대응할 수 있도록 돕는 것이 목표이다.
-2. 해결하려는 문제
-    - 반복적인 수작업 문제
-    - 기존에는 각 서버에 SSH로 접속하여 CPU, 메모리, 디스크 사용량 등을 직접 확인해야 함.
-    - 중요한 서비스(웹 서버, 데이터베이스 등)의 상태를 사람이 직접 체크해야 함.
-    - 시스템 로그를 직접 분석해야 하므로 침입 탐지 및 장애 감지가 어려움.
-    - 서버 장애 발생 시 신속한 대응 어려움
-    - 장애 발생 시 원인을 파악하기 위해 로그를 개별적으로 분석해야 하며, 시간이 오래 걸림.
-    - 서버별 로그를 중앙에서 쉽게 관리할 방법이 없음.
-3. 프로젝트 목표
-    - 서버 점검 자동화: 각 서버에서 Bash, PowerShell 스크립트를 사용해 상태 점검 및 로그 분석 수행
-    - 로그 중앙 수집: Python을 사용하여 SFTP로 모든 서버의 생성된 점검 로그를 수집
-    - HTML 리포트 생성: 서버 점검 결과를 보기 쉽게 HTML로 시각화하여 분석 가능하도록 출력
+서버(Linux/Windows)의 상태를 자동 점검하고, 시각적으로 보기 쉬운 HTML 리포트를 생성하는 자동화 도구.
 
 ---
 
-## 활용 기술 및 개발 환경
-1. 개발 언어 및 도구
-    - Bash, PowerShell 스크립트 → 서버 점검 자동화 (CPU, 메모리, 디스크, 서비스 상태, 보안 로그 분석)
-    - Python → SSH 및 SFTP를 이용한 서버 로그 수집, HTML 리포트 생성
-    - HTML/CSS → 서버 점검 리포트 UI 구성
-2. 개발 환경
-    - 콘솔 운영 체제: Windows 계열
-    - 서버 운영 체제: Linux 계열(CentOS, Ubuntu, Rocky Linux), Windows 계열(서버)
-    - 제약 사항: 서버 간 직접 통신 불가 (네트워크 연결 제한), 기본 언어만 사용 가능
+## 프로젝트 목적
+
+- 리눅스 및 윈도우 서버의 주요 시스템 정보를 수집하여 로그 생성
+- 최신 로그를 불러와 HTML 리포트 자동 생성
 
 ---
 
-## 개발 계획(4주 개발 일정)
-|주차|일자|개발 내용|
-|--|----|--------|
-|1주차|3.20. ~ 3.26.|프로젝트 설계 및 기본 환경 설정 (서버 점검 스크립트 초안 작성)|
-|2주차|3.27. ~ 4.2.|서버 별 스크립트 완성 (서버 상태 점검 및 로그 분석 기능 추가)|
-|3주차|4.2. ~ 4.9|Python을 이용한 SFTP 로그 수집 구현, HTML 리포트 템플릿 제작|
-|4주차|4.10. ~ 4.16.|통합 테스트 및 최종 리포트 기능 개선, 문서 작성 및 발표 준비|
+## 파일 구성 요소
+
+| 파일명 | 설명 |
+| --- | --- |
+| `server_check.sh` | 리눅스 서버 상태 점검 스크립트 |
+| `server_check.ps1` | 윈도우 서버 상태 점검 스크립트 (PowerShell) |
+| `fetch_report.py` | 서버에서 점검 결과 파일 수집 (SSH, SCP ) |
+| `generate_report_html.py` | 수집된 로그를 기반으로 HTML 리포트 생성 |
+| `servers_config.py` | 수집 대상 서버 목록 구성 파일 |
+| `run.py` | 전체 자동 실행 스크립트 (`fetch` → `generate`) |
+| `/reports` | 불러온 로그 및 생성된 HTML 리포트 저장 |
+
+---
+
+## 지원 OS 및 특이사항
+
+1. **각 배포판 및 버전을 최대한 지원할 수 있도록 하였음**
+    - Ubuntu 14.04 / 16.04
+    - CentOS 6.x / 7.x
+    - Rocky 8+ / Fedora
+    - Kali / Debian
     
+    | 항목 | Ubuntu | CentOS/Fedora/Rocky |
+    | --- | --- | --- |
+    | 로그인 실패 로그 | `/var/log/auth.log` | `/var/log/secure` |
+    | `journalctl` 사용 | O (systemd 기반) | O (다 사용 가능) |
+    | Apache 서비스명 | `apache2` | `httpd` |
+    | MySQL 서비스명 | `mysql` or `mariadb` | 보통 `mariadb` |
+    | `hostname -I` 명령어 | 기본 설치됨 | 일부 배포판은 없음 |
+    | OS 이름 추출 방식 | `/etc/os-release` | 동일함 |
+2. **단독망에서의 사용을 고려하여 기본 라이브러리만 사용하도록 하였음**
+    - yaml을 사용할 수 없어 서버 목록을 딕셔너리로 선언(`servers_config.py`)
+    - paramiko를 사용할 수 없어 sftp 사용 불가 → ssh/scp로 대체
 
 ---
 
-## 주요 기능
-1. 서버 점검 자동화 (Bash, PowerShell)
-    - 서버의 CPU, 메모리, 디스크 사용량 확인
-    - 필수 서비스 (Apache, MySQL, SSH 등) 상태 점검
-    - 보안 로그 분석 (침입 시도, 로그인 실패 감지)
-    - 시스템 에러 로그 분석 (최근 10개 주요 오류 표시)
-    - 결과를 저장(*.log 파일)*
-    - *점검을 자동으로 실행하도록 크론(스케줄러) 등록*
-2.  *SFTP를 이용한 로그 중앙 수집 (Python)*
-    - *모든 서버의 점검 결과 (*.log 파일)를 자동으로 수집
-    - 최신 로그를 중앙에서 확인할 수 있도록 SFTP로 다운로드
-3. HTML 리포트 자동 생성 (Python)
-    - 서버 점검 데이터를 HTML로 변환하여 한눈에 확인 가능
-    - 서비스 상태, 로그인 실패 내역, 시스템 오류 등을 색상 및 테이블로 시각화
-    - 관리자가 웹 브라우저에서 쉽게 확인 가능
-    - HTML 리포트 예시
-    
-    ![image.png](attachment:b2eb86a9-a286-4c9b-b5e6-c37cc4a85a13:image.png)
+## 점검 항목
+
+- OS 정보, 호스트명, IP 주소
+- CPU/메모리/디스크 사용률
+- 서비스 상태 및 자동 시작 서비스 확인
+- 로그인 실패 내역
+- 시스템 에러 로그
+
+---
+
+## 경고 기준
+
+- **CPU 또는 메모리 사용률 ≥ 90%**
+- **디스크 사용률 ≥ 80%**
+- 조건을 초과하면 ⚠️ 경고 표시
+
+---
+
+## 사용 방법
+
+### 1. 서버에 점검 스크립트 배포
+
+- 리눅스: `server_check.sh` 실행 예약
+    1. 실행 권한 부여
+        
+        ```bash
+        chmod +x ~/server_check.sh
+        ```
+        
+    2. 크론 설정 열기
+        
+        ```bash
+        crontab -e
+        ```
+        
+    3. 아래 한 줄 추가 (매일 06:00 실행)
+        
+        ```
+        0 6 * * * /bin/bash /home/사용자명/server_check.sh
+        ```
+        
+- 윈도우: `server_check.ps1` 예약 작업(Task Scheduler)
+    - 작업 스케줄러에 등록하는 방법:
+        1. **시작 메뉴 → 작업 스케줄러(Task Scheduler)** 실행
+        2. **작업 만들기** 클릭
+        3. **이름**: `서버 리포트 자동 생성`
+        4. **트리거** 탭 → *매일 / 특정 시간* 설정
+        5. **동작** 탭 → *프로그램 시작* 선택
             
+            
+            | 항목 | 값 예시 | 설명 |
+            | --- | --- | --- |
+            | 프로그램 | `C:\Users\me\AppData\Local\Programs\Python\Python311\python.exe` | `python` |
+            | 인수 | `run.py` |  |
+            | 시작 위치 | `C:\Users\me\Documents\server-check-and-report` | `run.py`가 있는 폴더 경로 |
+
+### 2. 자동화를 위한 SSH 키 인증 설정
+
+### SSH 키 인증 설정 방법
+
+**1. [윈도우] 키 생성 (1회만 하면 됨)**
+
+PowerShell에서:
+
+```powershell
+ssh-keygen -t rsa -b 4096 -f $env:USERPROFILE\.ssh\id_check_rsa
+```
+
+- `Enter passphrase`: 비워도 되고 입력해도 됨
+- 결과:
+    - 개인키: `C:\Users\<이름>\.ssh\id_check_rsa`
+    - 공개키: `C:\Users\<이름>\.ssh\id_check_rsa.pub`
 
 ---
 
-## 예상되는 어려움 및 해결 방안
-1. 서버 점검 데이터의 다양성(OS, 서비스마다 차이)
-    - Linux(CentOS, Rocky)와 Windows Server의 점검 방식이 다름 → OS별로 맞춤형 Bash(PowerShell) 스크립트 작성하여 대응
-2. 로그 파일 크기 증가 문제
-    - 일정 기간이 지나면 오래된 로그를 자동 삭제하도록 스크립트에 정리 기능 추가
-    - (예시) Linux: find /var/log/server_check/ -type f -mtime +30 -exec rm -f {} \;
-    - (예시) Windows: `Get-ChildItem C:\Logs\ServerCheck\
-3. 가독성 좋은 HTML 리포트 제작
-    - 기본 테이블 기반의 HTML 리포트에서 Chart.js를 활용한 시각화 추가 (막대 그래프, 원형 그래프 등)
-    - 중요한 정보를 강조 표시
-    - HTML 리포트를 관리자가 웹 브라우저에서 쉽게 확인 가능하도록 디자인 개선
+**2. [리눅스(칼리/우분투)] 공개키 등록**
+
+**A. 공개키 붙여넣기**
+
+```bash
+mkdir -p ~/.ssh
+nano ~/.ssh/authorized_keys
+# → Windows에서 만든 id_check_rsa.pub 내용 붙여넣기
+
+```
 
 ---
 
-## 기대 효과
-1. 서버 관리 업무 자동화
-    - 반복적인 서버 점검 업무를 자동화하여 관리자의 부담을 줄임
-    - 서버마다 수동으로 접속하여 상태를 확인하는 대신, 자동으로 점검 & 보고서 생성
-2. 장애 및 보안 위협 조기 감지
-    - CPU, 메모리, 디스크 사용량 증가를 자동으로 감지하여 장애 발생 전 대비 가능
-    - 서비스 비정상 종료 및 보안 로그 분석을 통해 해킹 시도나 비정상적 접근을 조기에 탐지
-3. 빠르고 직관적인 서버 상태 분석
-    - HTML 리포트 제공 → 웹 브라우저에서 한눈에 서버 상태 확인 가능
-    - Chart.js 그래프 활용 → CPU, 메모리, 디스크 사용량을 시각화하여 가독성 향상
-    - 서비스 장애 및 로그인 실패 표시 → 오류 상황을 색상으로 강조하여 신속한 대응 가능
+**3. [리눅스] 퍼미션 설정**
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+chown -R $USER:$USER ~/.ssh
+chmod 755 ~  # 홈 디렉토리 권한 너무 제한되면 인증 실패함
+```
+
+---
+
+**4. [리눅스] SSH 서버 설정 확인 - 필수 항목 확인/수정**
+
+```bash
+sudo vim /etc/ssh/sshd_config
+
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+```
+
+변경 후 재시작:
+
+```bash
+sudo systemctl restart ssh
+```
+
+---
+
+**5. [윈도우] SSH 설정 - 파일 위치:** `C:\Users\<이름>\.ssh\config`
+
+```
+Host ubuntu-server
+    HostName 123.123.123.123
+    User ubuntu
+    IdentityFile ~/.ssh/id_check_rsa
+
+Host kali-server
+    HostName 123.123.123.123
+    User kali
+    IdentityFile ~/.ssh/id_check_rsa
+
+Host win-server
+    HostName 123.123.123.123
+    User user
+    IdentityFile C:/Users/user/.ssh/id_check_rsa
+```
+
+- ~ 대신 절대경로(C:/Users/...) 쓰는 게 Windows에서는 더 안정적
+
+---
+
+**6. [윈도우에서] 비밀번호 없이 접속 확인**
+
+```powershell
+ssh kali-server
+ssh ubuntu-server
+ssh win-local
+```
+
+→ 모두 **비밀번호 없이 바로 로그인** 되면 설정 완료.
+
+### 3. 로컬에서 수집 및 리포트 생성
+
+```bash
+python run.py
+```
+
+### 3. 결과 확인
+
+- `reports/summary_YYYYMMDD_HHMMSS.html` 열기
+- 요약 테이블 + 서버별 상세 로그 확인 가능

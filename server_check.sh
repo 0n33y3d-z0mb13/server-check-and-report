@@ -1,170 +1,130 @@
 #!/bin/bash
 
-# 공통 설정
-HOSTNAME=$(hostname)
-DATETIME=$(date "+%Y-%m-%d_%H%M%S")     # 파일명용
-REPORT_TIME=$(date "+%Y-%m-%d %H:%M:%S") # 리포트 본문용
+# UTF-8 설정
+export LANG=C.UTF-8
+
+# 로그 디렉토리 및 파일 설정
+NOW=$(date "+%Y-%m-%d_%H%M%S")
 LOG_DIR="/var/log/server_check"
-LOG_FILE="$LOG_DIR/${DATETIME}.log"
-SUMMARY_MODE=false
-
-# 옵션 처리: --summary 붙일 경우 요약본 출력
-if [[ "$1" == "--summary" ]]; then
-    SUMMARY_MODE=true
-fi
-
+LOG_FILE="$LOG_DIR/$NOW.log"
 mkdir -p "$LOG_DIR"
 
-# 리포트 시작
-if $SUMMARY_MODE; then
-    echo "===== [서버 요약 보고서] $REPORT_TIME ====="
-else
-    echo "===== [서버 점검 리포트] $REPORT_TIME =====" > "$LOG_FILE"
-fi
+log() {
+    echo "$1" | tee -a "$LOG_FILE"
+}
 
-# 서버 기본 정보
-OS_NAME=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')
-KERNEL=$(uname -r)
-CPU_MODEL=$(lscpu 2>/dev/null | grep 'Model name' | awk -F: '{print $2}' | sed 's/^ *//')
-UPTIME=$(uptime -p 2>/dev/null || uptime)
+log "[리포트 생성 시각]"
+log "시각: $(date '+%Y-%m-%d %H:%M:%S')"
+log ""
 
-# IP 주소 추출 (모든 환경 대응)
-if command -v hostname &> /dev/null && hostname -I &> /dev/null; then
-    IP_ADDR=$(hostname -I | awk '{print $1}')
-else
-    IP_ADDR=$(ip addr show | awk '/inet / && !/127.0.0.1/ {print $2}' | cut -d/ -f1 | head -n 1)
-fi
+# [서버 기본 정보]
+HOSTNAME=$(hostname)
+OS_NAME=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+OS_VERSION=$(uname -r)
+UPTIME=$(uptime -p)
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 
-if $SUMMARY_MODE; then
-    echo "호스트명: $HOSTNAME"
-    echo "OS: ${OS_NAME:-Unknown}"
-    echo "Uptime: $UPTIME"
-    echo "IP: $IP_ADDR"
-else
-    {
-    echo "[서버 기본 정보]"
-    echo "호스트명: $HOSTNAME"
-    echo "운영 체제: ${OS_NAME:-Unknown}"
-    echo "커널 버전: $KERNEL"
-    echo "CPU 모델: ${CPU_MODEL:-Unknown}"
-    echo "업타임: $UPTIME"
-    echo "IP 주소: $IP_ADDR"
-    echo ""
-    } >> "$LOG_FILE"
-fi
+log "[서버 기본 정보]"
+log "호스트명: $HOSTNAME"
+log "OS: $OS_NAME"
+log "커널 버전: $OS_VERSION"
+log "업타임: $UPTIME"
+log "IP 주소: $IP"
+log ""
 
-# CPU 사용률
+# [CPU]
 CPU_LINE=$(top -bn1 | grep "%Cpu(s)")
-CPU_IDLE=$(echo "$CPU_LINE" | awk -F',' '{for (i=1; i<=NF; i++) if ($i ~ /id/) {print $i}}' | awk '{print $1}')
+CPU_IDLE=$(echo "$CPU_LINE" | awk -F',' '{for (i=1; i<=NF; i++) if ($i ~ /id/) print $i}' | awk '{print $1}')
 CPU_USED=$(awk "BEGIN {printf \"%.1f\", 100 - $CPU_IDLE}")
+log "[CPU]"
+log "사용률: $CPU_USED %"
+log ""
 
-if $SUMMARY_MODE; then
-    echo "CPU 사용률: ${CPU_USED}%"
-else
-    echo "[CPU 사용률]" >> "$LOG_FILE"
-    echo "CPU 사용률: ${CPU_USED}%" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
-fi
-
-
-# 메모리 사용
+# [메모리]
 TOTAL=$(free -m | awk '/Mem:/ {print $2}')
 USED=$(free -m | awk '/Mem:/ {print $3}')
 PERCENT=$(awk "BEGIN {printf \"%.1f\", $USED/$TOTAL * 100}")
+log "[메모리]"
+log "총 메모리: ${TOTAL} MB"
+log "사용 중: ${USED} MB"
+log "사용률: ${PERCENT} %"
+log ""
 
-if $SUMMARY_MODE; then
-    echo "메모리 사용률: $PERCENT% ($USED MB / $TOTAL MB)"
-else
-    echo "[메모리 사용량]" >> "$LOG_FILE"
-    echo "메모리 사용률: $PERCENT% ($USED MB / $TOTAL MB)" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
-fi
-
-# 디스크 사용률 (요약 모드: %만, 전체 모드: 퍼센트 + 용량)
+# [디스크 - 루트(/)]
 DISK_INFO=$(df -h / | awk 'NR==2')
-DISK_USED=$(echo "$DISK_INFO" | awk '{print $3}')
 DISK_TOTAL=$(echo "$DISK_INFO" | awk '{print $2}')
-DISK_PERCENT=$(echo "$DISK_INFO" | awk '{print $5}')
+DISK_USED=$(echo "$DISK_INFO" | awk '{print $3}')
+DISK_PERCENT=$(echo "$DISK_INFO" | awk '{print $5}' | tr -d '%')
+log "[디스크 - 루트(/)]"
+log "총 용량: $DISK_TOTAL"
+log "사용 중: $DISK_USED"
+log "사용률: $DISK_PERCENT %"
+log ""
 
-if $SUMMARY_MODE; then
-    echo "디스크 사용률 (/): $DISK_PERCENT"
-else
-    echo "[디스크 사용량 - 루트(/)]" >> "$LOG_FILE"
-    echo "총 용량: $DISK_TOTAL, 사용 중: $DISK_USED, 사용률: $DISK_PERCENT" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
-fi
-
-# 서비스 상태 확인 (systemctl or service)
-SERVICE_FOUND=false
-
-if $SUMMARY_MODE; then
-    echo "서비스 상태:"
-    for service in "${SERVICES[@]}"; do
-        if pidof systemd &>/dev/null && systemctl list-units --type=service | grep -q "$service"; then
-            STATUS=$(systemctl is-active "$service")
-            echo " - $service: $STATUS"
-            SERVICE_FOUND=true
-        elif service "$service" status &>/dev/null; then
-            STATUS=$(service "$service" status | grep -q running && echo "active" || echo "inactive")
-            echo " - $service: $STATUS"
-            SERVICE_FOUND=true
-        fi
-    done
-    if ! $SERVICE_FOUND; then
-        echo " - 점검 대상 서비스 없음"
-    fi
-else
-    echo "[서비스 상태]" >> "$LOG_FILE"
-    for service in "${SERVICES[@]}"; do
-        if pidof systemd &>/dev/null && systemctl list-units --type=service | grep -q "$service"; then
-            STATUS=$(systemctl is-active "$service")
-            echo "$service: $STATUS" >> "$LOG_FILE"
-            SERVICE_FOUND=true
-        elif service "$service" status &>/dev/null; then
-            STATUS=$(service "$service" status | grep -q running && echo "active" || echo "inactive")
-            echo "$service: $STATUS" >> "$LOG_FILE"
-            SERVICE_FOUND=true
-        fi
-    done
-    if ! $SERVICE_FOUND; then
-        echo "점검 대상 서비스 없음" >> "$LOG_FILE"
-    fi
-    echo "" >> "$LOG_FILE"
-fi
-
-# 로그인 실패 로그 (Ubuntu + RHEL 계열 모두 대응)
-FAILED_LOGINS=$( (grep "Failed password" /var/log/auth.log 2>/dev/null; grep "Failed password" /var/log/secure 2>/dev/null) | tail -n 5 )
-
-if $SUMMARY_MODE; then
-    COUNT=$(echo "$FAILED_LOGINS" | grep -c .)
-    if [ "$COUNT" -eq 0 ]; then
-        echo "로그인 실패 기록: 없음"
+# [서비스 상태]
+SERVICES=("nginx" "sshd" "cron" "mysql") # 필요에 따라 수정
+log "[서비스 상태]"
+for svc in "${SERVICES[@]}"; do
+    if systemctl list-units --type=service | grep -q "$svc"; then
+        STATUS=$(systemctl is-active "$svc")
+        log "$svc: $STATUS"
+    elif service "$svc" status &>/dev/null; then
+        STATUS=$(service "$svc" status | grep -q running && echo "active" || echo "inactive")
+        log "$svc: $STATUS"
     else
-        echo "로그인 실패 기록: $COUNT건"
+        log "$svc: 미설치 또는 찾을 수 없음"
     fi
-else
-    echo "[보안 로그: 로그인 실패]" >> "$LOG_FILE"
-    if [ -z "$FAILED_LOGINS" ]; then
-        echo "최근 로그인 실패 기록 없음" >> "$LOG_FILE"
-    else
-        echo "$FAILED_LOGINS" >> "$LOG_FILE"
-    fi
-    echo "" >> "$LOG_FILE"
-fi
+done
+log ""
 
-# 시스템 에러 로그 (journalctl 없을 시 /var/log/messages)
-if command -v journalctl &> /dev/null && pidof systemd &>/dev/null; then
-    ERROR_LOGS=$(journalctl -p err -n 5)
+# [자동 시작 서비스 중 중지된 항목]
+log "[자동 시작 서비스 중 중지된 항목]"
+AUTOSTART_DOWN=$(systemctl list-units --type=service --state=inactive | grep enabled | awk '{print $1}')
+if [ -z "$AUTOSTART_DOWN" ]; then
+    log "모든 자동 시작 서비스가 실행 중입니다."
+else
+    echo "$AUTOSTART_DOWN" | while read svc; do
+        log "$svc: 중지됨"
+    done
+fi
+log ""
+
+# [디스크 용량 경고]
+log "[디스크 용량 경고]"
+if [ "$DISK_PERCENT" -ge 90 ]; then
+    log "루트(/) 디스크 사용률 경고: $DISK_PERCENT %"
+else
+    log "루트(/) 디스크 용량 정상: $DISK_PERCENT %"
+fi
+log ""
+
+# [로그인 실패]
+log "[로그인 실패]"
+FAILED_LOGINS=$( (grep "Failed password" /var/log/auth.log 2>/dev/null; grep "Failed password" /var/log/secure 2>/dev/null) | tail -n 5)
+if [ -z "$FAILED_LOGINS" ]; then
+    log "최근 로그인 실패 기록 없음"
+else
+    echo "$FAILED_LOGINS" | while read line; do
+        log "$(echo "$line" | cut -c1-100)..."
+    done
+fi
+log ""
+
+# [시스템 에러 로그]
+log "[시스템 에러 로그]"
+if command -v journalctl &>/dev/null; then
+    ERROR_LOGS=$(journalctl -p err -n 5 2>/dev/null)
 else
     ERROR_LOGS=$(grep -i "error" /var/log/messages 2>/dev/null | tail -n 5)
 fi
-
-if $SUMMARY_MODE; then
-    ERR_COUNT=$(echo "$ERROR_LOGS" | grep -c -v '^--')
-    echo "시스템 에러 로그: $ERR_COUNT건 감지됨"
+if [ -z "$ERROR_LOGS" ]; then
+    log "최근 시스템 에러 없음"
 else
-    echo "[최근 시스템 에러 로그]" >> "$LOG_FILE"
-    echo "$ERROR_LOGS" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
-    echo "===== 점검 완료 =====" >> "$LOG_FILE"
+    echo "$ERROR_LOGS" | while read line; do
+        log "$(echo "$line" | cut -c1-100)..."
+    done
 fi
+log ""
+
+log "[점검 상태]"
+log "점검 완료"
